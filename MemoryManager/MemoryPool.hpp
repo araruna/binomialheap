@@ -9,6 +9,7 @@
 #define MEMORYPOOL_HPP_
 
 #include <cstddef>
+#include <stdexcept>
 
 //template<typename T>
 class MemoryPool {
@@ -17,27 +18,25 @@ public:
 	~MemoryPool();
 
 	class MemoryUnit {
-	public:
-		inline void* getAddress() const { return address; }
 	protected:
-		MemoryUnit() : address(NULL), pool(NULL), next(NULL) {}
-		MemoryUnit(MemoryPool *pool) : address(NULL), pool(pool), next(NULL) {}
+		MemoryUnit() : address(NULL) { next = right = left = NULL; balance = 0; }
 	private:
+		friend class MemoryPool;
+
 		void *address;
-		MemoryPool *const pool;
-		MemoryUnit *next;
-		//* TODO Implementar ponteiros de arvore para poder realizar a limpeza dos nos alocados
-		//*      no momento da destruicao do pool.
+		MemoryUnit *next;         // <-- Uso em Lista encadeada (nos disponiveis)
+		MemoryUnit *right, *left; // <-- Uso em Arvore AVL (nos em uso)
+		char balance;             // <-- Uso em Arvore AVL (nos em uso)
 	};
 
-	MemoryUnit const * getNewElement();
-	void returnElement(MemoryUnit *unit) throw (std::invalid_argument);
+	void* getNewElement();
+	void  returnElement(void *ptr) throw (std::invalid_argument);
 
 private:
 	typedef struct __mp_memblock_t {
 		struct __mp_memblock_t *next;
 		MemoryUnit *units;
-		void *block;
+		char *block;
 	} MemoryBlock;
 
 	unsigned long inuse, maxinuse;
@@ -46,10 +45,20 @@ private:
 	size_t chunksize;
 
 	MemoryUnit *available;
+	MemoryUnit *busy;
 	MemoryBlock *blocks;
 
 	void populatePool(MemoryBlock *block);
 	void addMemoryBlock(bool more = true);
+
+	MemoryUnit* findUnit(void* ptr);
+	MemoryUnit* findSuccessor(MemoryUnit *unit);
+	void giveawayUnit(MemoryUnit *unit);
+	void returnUnit(MemoryUnit *unit);
+
+	void AVLRebalancePath(MemoryUnit *top, MemoryUnit *unit);
+	MemoryUnit * AVLSingleRotate(MemoryUnit *parent, MemoryUnit *child);
+	MemoryUnit * AVLDoubleRotate(MemoryUnit *parent, MemoryUnit *child, MemoryUnit *gdchild, MemoryUnit *unit);
 };
 
 #endif /* MEMORYPOOL_HPP_ */

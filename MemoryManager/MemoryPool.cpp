@@ -14,7 +14,6 @@
 #endif
 
 #include "MemoryPool.hpp"
-#include <stdexcept>
 #include <cmath>
 
 MemoryPool::MemoryPool(size_t chunk_size, unsigned int block_nelem, float load_factor)
@@ -24,7 +23,7 @@ throw (std::out_of_range)
 		throw std::out_of_range("Valor deve estar no intervalo (0.0; 1.0].");
 
 	inuse = 0uL;
-	maxinuse = (unsigned long) ceil(loadf*nelems);
+	maxinuse = (unsigned long) ceil(loadf*static_cast<float>(nelems));
 
 	available = NULL;
 	blocks = NULL;
@@ -36,7 +35,6 @@ throw (std::out_of_range)
 
 MemoryPool::~MemoryPool() {
 	MemoryBlock *block, *auxb;
-	MemoryUnit *unit, *auxu;
 
 	for(block = blocks; block != NULL; block = auxb) {
 		auxb = block->next;
@@ -51,13 +49,7 @@ MemoryPool::addMemoryBlock(bool more) {
 	MemoryBlock *block = new MemoryBlock;
 
 	block->block = new char[nelems*chunksize];
-	block->units = (MemoryUnit*)new char[nelems*sizeof(MemoryUnit)];
-
-	register unsigned int i;
-	MemoryUnit *unit = block->units;
-
-	for(i = 0; i < nelems; ++i, ++unit)
-		new (unit) MemoryUnit(this);
+	block->units = new MemoryUnit[nelems];
 
 	populatePool(block);
 
@@ -71,42 +63,180 @@ MemoryPool::addMemoryBlock(bool more) {
 void
 MemoryPool::populatePool(MemoryBlock *block) {
 	MemoryUnit *unit = block->units;
-	void *address = block->block;
+	char *address = block->block;
 	register unsigned int i;
 
 	for(i = 0; i < nelems; ++i, ++unit, address += chunksize) {
-		unit->address = address;
+		unit->address = (void*) address;
 		unit->next = available;
 		available = unit;
 	}
 }
 
-MemoryPool::MemoryUnit const *
+void*
 MemoryPool::getNewElement() {
 	MemoryUnit *unit = available;
 
 	available = available->next;
 
-	// OBS: Usado para reconhecer objetos ja devolvidos
-	unit->next = (MemoryUnit*) 0x1;
-
-	if(++inuse > maxinuse)
+	if(unlikely(++inuse >= maxinuse))
 		addMemoryBlock();
+
+	giveawayUnit(unit);
 
 	return unit;
 }
 
 void
-MemoryPool::returnElement(MemoryUnit *unit)
+MemoryPool::returnElement(void *ptr)
 throw (std::invalid_argument) {
-	if(likely(unit->pool != this))
-		throw std::invalid_argument("Objeto pertence a outro pool de memoria.");
+	MemoryUnit *unit = findUnit(ptr);
 
-	// Reconhecendo se ja foi devolvido ao pool
-	if(likely(unit->next == (MemoryUnit*) 0x1)) {
-		--inuse;
+	if(unlikely(unit == NULL))
+		throw std::invalid_argument("O endereco de memoria informado nao pertence a este pool.");
 
-		unit->next = available;
-		available = unit;
+	--inuse;
+
+	returnUnit(unit);
+}
+
+void
+MemoryPool::giveawayUnit(MemoryUnit *unit) { // Equivalente a inclusao em AVL
+	unit->left = unit->right = unit->next = NULL;
+	unit->balance = 0;
+
+	if(unlikely(busy == NULL))
+		busy = unit;
+	else {
+		MemoryUnit *parent, *node, *top;
+
+		parent = node = top = busy;
+
+		while(node != NULL) {
+			parent = node;
+
+			if(unit->address < parent->address)
+				node = parent->left;
+			else
+				node = parent->right;
+
+			if(parent->balance != 0)
+				top = parent;
+		}
+
+		(unit->address < parent->address ? parent->left : parent->right) = unit;
+		unit->next = parent;
+
+		if(top->balance == 0)
+			AVLRebalancePath(top, unit);
+		else {
+			MemoryUnit *first  = (unit->address < top->address   ? top->left   : top->right);
+			MemoryUnit *second = (unit->address < first->address ? first->left : first->right);
+
+			if((unit->address < top->address && top->balance > 0) || (unit->address > top->address && top->balance < 0)) { // Caminho curto
+				top->balance = 0;
+				AVLRebalancePath(first, unit);
+			} else {
+				if((top->left == first && first->left == second) || (top->right == first && first->right == second)) {
+					AVLRebalancePath(AVLSingleRotate(top, first), unit);
+				} else
+					AVLRebalancePath(AVLDoubleRotate(top, first, second, unit), unit);
+			}
+		}
+	}
+}
+
+void
+MemoryPool::returnUnit(MemoryUnit *unit) {
+	if(unlikely(busy->left == NULL && busy->right == NULL)) {
+		busy->next = available;
+		available = busy;
+		busy = NULL;
+	} else {
+		// TODO
+	}
+}
+
+void
+MemoryPool::AVLRebalancePath(MemoryUnit *top, MemoryUnit *unit) {
+	while(top != NULL && top != unit) {
+		if(unit->address < top->address) {
+			--top->balance;
+			top = top->left;
+		} else {
+			++top->balance;
+			top = top->right;
+		}
+	}
+}
+
+MemoryPool::MemoryUnit *
+MemoryPool::AVLSingleRotate(MemoryUnit *parent, MemoryUnit *child) {
+	child->next = parent->next;
+	parent->next = child;
+	if(likely(child->next != NULL))
+		(child->next->left == parent ? child->next->left : child->next->right) = child;
+	else
+		busy = child;
+
+	parent->balance = child->balance = 0;
+
+	if(child->address < parent->address) { // Rotacao a direita
+		parent->left = child->right;
+		if(child->right != NULL)
+			child->right->next = parent;
+		child->right = parent;
+
+		return child->left;
+	} else {
+		parent->right = child->left;
+		if(child->left != NULL)
+			child->left->next = parent;
+		child->left = parent;
+
+		return child->right;
+	}
+}
+
+
+MemoryPool::MemoryUnit *
+MemoryPool::AVLDoubleRotate(MemoryUnit *parent, MemoryUnit *child, MemoryUnit *gdchild, MemoryUnit *unit) {
+	MemoryUnit *incr, *decr;
+
+	gdchild->next = parent->next;
+	if(likely(gdchild->next != NULL))
+		(gdchild->next->left == parent ? gdchild->next->left : gdchild->next->right) = child;
+	else
+		busy = gdchild;
+
+	child->next = parent->next = child;
+	parent->balance = child->balance = gdchild->balance = 0;
+
+	if(child->address < parent->address) { // Rotacao dupla direita
+		incr = parent;
+		decr = child;
+	} else { // Rotacao dupla esquerda
+		incr = child;
+		decr = parent;
+	}
+
+	incr->left = gdchild->right;
+	decr->right = gdchild->left;
+	gdchild->right = incr;
+	gdchild->left = decr;
+
+	if(incr->left != NULL)
+		incr->left->next = parent;
+	if(decr->right != NULL)
+		decr->right->next = child;
+
+	if(unit == gdchild)
+		return NULL;
+	else if(unit->address < gdchild->address) {
+		++incr->balance;
+		return decr->right;
+	} else {
+		--decr->balance;
+		return incr->left;
 	}
 }
