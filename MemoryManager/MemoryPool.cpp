@@ -16,21 +16,17 @@
 #include "MemoryPool.hpp"
 #include <cmath>
 
-MemoryPool::MemoryPool(size_t chunk_size, unsigned int block_nelem, float load_factor)
-throw (std::out_of_range)
-: nelems(block_nelem), loadf(load_factor) {
-	if(loadf <= 0.0f || loadf > 1.0f)
-		throw std::out_of_range("Valor deve estar no intervalo (0.0; 1.0].");
-
-	inuse = 0uL;
-	maxinuse = (unsigned long) ceil(loadf*static_cast<float>(nelems));
+MemoryPool::MemoryPool(size_t elem_size, unsigned int elems_per_block)
+: nelems(elems_per_block) {
+	inuse = nunits = 0uL;
 
 	available = NULL;
 	blocks = NULL;
 
-	chunksize = chunk_size;
+	// Os chunks guardam referencia as suas MemoryUnits
+	chunksize = sizeof(MemoryUnit*) + elem_size;
 
-	addMemoryBlock(false);
+	addMemoryBlock();
 }
 
 MemoryPool::~MemoryPool() {
@@ -45,7 +41,7 @@ MemoryPool::~MemoryPool() {
 }
 
 void
-MemoryPool::addMemoryBlock(bool more) {
+MemoryPool::addMemoryBlock() {
 	MemoryBlock *block = new MemoryBlock;
 
 	block->block = new char[nelems*chunksize];
@@ -53,8 +49,7 @@ MemoryPool::addMemoryBlock(bool more) {
 
 	populatePool(block);
 
-	if(likely(more))
-		maxinuse += nelems;
+	nunits += nelems;
 
 	block->next = blocks;
 	blocks = block;
@@ -63,255 +58,56 @@ MemoryPool::addMemoryBlock(bool more) {
 void
 MemoryPool::populatePool(MemoryBlock *block) {
 	MemoryUnit *unit = block->units;
+	MemoryUnit **ref;
 	char *address = block->block;
 	register unsigned int i;
 
 	for(i = 0; i < nelems; ++i, ++unit, address += chunksize) {
-		unit->address = (void*) address;
+		*(ref = address) = unit;
+
+		// Pois a porcao saltada guarda o endereco desta MemoryUnit
+		// de forma que possamos recupera-lo quando a memoria for devolvida
+		unit->address = static_cast<MemoryUnit*>(address) + 1;
 		unit->next = available;
+
 		available = unit;
 	}
 }
 
 void*
-MemoryPool::getNewElement() {
+MemoryPool::take() {
 	MemoryUnit *unit = available;
 
 	available = available->next;
 
-	if(unlikely(++inuse >= maxinuse))
+	if(unlikely(++inuse >= nunits))
 		addMemoryBlock();
 
-	giveawayUnit(unit);
-
-	return unit;
+	return unit->address;
 }
 
 void
-MemoryPool::returnElement(void *ptr)
+MemoryPool::yield(void *ptr)
 throw (std::invalid_argument) {
-	MemoryUnit *unit = returnUnit(ptr);
+	MemoryUnit *unit = static_cast<MemoryUnit*>(ptr) - 1;
 
-	if(unlikely(unit == NULL))
+	if(likely(isValid(unit))) {
+		unit->next = available;
+		available = unit;
+		--inuse;
+	} else
 		throw std::invalid_argument("O endereco de memoria informado nao pertence a este pool.");
-
-	unit->next = available;
-	available = unit;
-	--inuse;
-
-	returnUnit(unit);
 }
 
-void
-MemoryPool::giveawayUnit(MemoryUnit *unit) { // Equivalente a inclusao em AVL
-	unit->left = unit->right = unit->next = NULL;
-	unit->balance = 0;
+bool
+MemoryPool::isValid(MemoryUnit *unit) {
+	char *address = reinterpret_cast<char*>(unit);
+	size_t offset = nelems*chunksize - 1;
 
-	if(unlikely(busy == NULL))
-		busy = unit;
-	else {
-		MemoryUnit *parent, *node, *top;
-
-		parent = node = top = busy;
-
-		while(node != NULL) {
-			parent = node;
-
-			if(unit->address < parent->address)
-				node = parent->left;
-			else
-				node = parent->right;
-
-			if(parent->balance != 0)
-				top = parent;
-		}
-
-		(unit->address < parent->address ? parent->left : parent->right) = unit;
-		unit->next = parent;
-
-		if(top->balance == 0)
-			AVLRebalancePath(top, unit);
-		else {
-			MemoryUnit *first  = (unit->address < top->address   ? top->left   : top->right);
-			MemoryUnit *second = (unit->address < first->address ? first->left : first->right);
-
-			if((unit->address < top->address && top->balance > 0) || (unit->address > top->address && top->balance < 0)) { // Caminho curto
-				top->balance = 0;
-				AVLRebalancePath(first, unit);
-			} else {
-				if((top->left == first && first->left == second) || (top->right == first && first->right == second)) {
-					top->balance = first->balance = 0;
-					AVLRebalancePath(AVLSingleRotate(top, first), unit);
-				} else
-					AVLRebalancePath(AVLDoubleRotate(top, first, second, unit), unit);
-			}
-		}
-	}
-}
-
-MemoryPool::MemoryUnit *
-MemoryPool::returnUnit(void *ptr) {
-	MemoryUnit *unit = NULL;
-
-	if(unlikely(busy->left == NULL && busy->right == NULL)) {
-		unit = busy;
-		busy = NULL;
-	} else {
-		MemoryUnit *antec, *node;
-
-		node = antec = busy;
-
-		while(node != NULL) {
-			antec = node;
-			if(ptr <= node->address) {
-				if(unlikely(ptr == node->address))
-					unit = node;
-				node = node->left;
-			} else
-				node = node->right;
-		}
-
-		if(likely(unit != NULL)) {
-			if(antec != unit) {
-				unit->address = antec->address;
-				antec->address = ptr;
-				unit = antec;
-			}
-
-			char child; // armazena de que lado o no a remover esta com relacao ao seu pai
-
-			if(unit->right != NULL) { // Removendo proprio no
-				unit->right->next = unit->next;
-
-				if(likely(unit->next != NULL))
-					(unit->next->right == unit ? child = 1, unit->next->right : child = -1, unit->next->left) = unit->right;
-				else
-					busy = unit->right;
-			} else { // Removendo antecessor
-				if(unit->left != NULL)
-					unit->left->next = unit->next;
-
-				if(likely(unit->next != NULL)) {
-					(unit->next->right == unit ? child = 1, unit->next->right : child = -1, unit->next->left) = unit->left;
-				} else
-					busy = unit->left;
-			}
-
-			node = unit->next;
-
-			while(node != NULL) {
-				if(node->balance*child >= 0) {
-					node->balance -= child;
-					break;
-				} else { // Necessita rotacao
-					MemoryUnit *brother = (child < 0 ? node->right : node->left);
-
-					if(brother->balance*node->balance >= 0) { // Rotacao Simples
-						AVLSingleRotate(node, brother);
-						// TODO Consertar balancos
-						node = brother->next;
-						if(brother->balance*node->balance == 0)
-							break;
-					} else { // Rotacao dupla
-						MemoryUnit * gdchild = (brother->balance < 0 ? brother->left : brother->right);
-						AVLDoubleRotate(node, brother, gdchild);
-						// TODO consertar balancos
-						node = gdchild->next;
-						child = (node != NULL && node->left == gdchild ? -1 : 1);
-					}
-				}
-			}
-		}
+	for(MemoryBlock *block = blocks; block != NULL; block = block->next) {
+		if(address >= block->block && address <= block->block + offset)
+			return true;
 	}
 
-	return unit;
-}
-
-void
-MemoryPool::AVLRebalancePath(MemoryUnit *top, MemoryUnit *unit) {
-	while(top != NULL && top != unit) {
-		if(unit->address < top->address) {
-			--top->balance;
-			top = top->left;
-		} else {
-			++top->balance;
-			top = top->right;
-		}
-	}
-}
-
-// OBS: usado tanto pela insercao quanto pela remocao
-MemoryPool::MemoryUnit *
-MemoryPool::AVLSingleRotate(MemoryUnit *parent, MemoryUnit *child) {
-	child->next = parent->next;
-	parent->next = child;
-	if(likely(child->next != NULL))
-		(child->next->left == parent ? child->next->left : child->next->right) = child;
-	else
-		busy = child;
-
-	if(child->address < parent->address) { // Rotacao a direita
-		parent->left = child->right;
-		if(child->right != NULL)
-			child->right->next = parent;
-		child->right = parent;
-
-		return child->left;
-	} else {
-		parent->right = child->left;
-		if(child->left != NULL)
-			child->left->next = parent;
-		child->left = parent;
-
-		return child->right;
-	}
-}
-
-// OBS: Chamado pela insercao
-MemoryPool::MemoryUnit *
-MemoryPool::AVLDoubleRotate(MemoryUnit *parent, MemoryUnit *child, MemoryUnit *gdchild, MemoryUnit *unit) {
-	MemoryUnit *incr, *decr;
-
-	gdchild->next = parent->next;
-	if(likely(gdchild->next != NULL))
-		(gdchild->next->left == parent ? gdchild->next->left : gdchild->next->right) = child;
-	else
-		busy = gdchild;
-
-	child->next = parent->next = child;
-	parent->balance = child->balance = gdchild->balance = 0;
-
-	if(child->address < parent->address) { // Rotacao dupla direita
-		incr = parent;
-		decr = child;
-	} else { // Rotacao dupla esquerda
-		incr = child;
-		decr = parent;
-	}
-
-	incr->left = gdchild->right;
-	decr->right = gdchild->left;
-	gdchild->right = incr;
-	gdchild->left = decr;
-
-	if(incr->left != NULL)
-		incr->left->next = parent;
-	if(decr->right != NULL)
-		decr->right->next = child;
-
-	if(unit == gdchild)
-		return NULL;
-	else if(unit->address < gdchild->address) {
-		++incr->balance;
-		return decr->right;
-	} else {
-		--decr->balance;
-		return incr->left;
-	}
-}
-
-// OBS; Chamado pela remocao
-void
-MemoryPool::AVLDoubleRotate(MemoryUnit *parent, MemoryUnit *child, MemoryUnit *gdchild) {
-
+	return false;
 }
