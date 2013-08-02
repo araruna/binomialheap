@@ -51,14 +51,13 @@ private:
 	void populatePool(MemoryBlock *block);
 	void addMemoryBlock(bool more = true);
 
-	MemoryUnit* findUnit(void* ptr);
-	MemoryUnit* findSuccessor(MemoryUnit *unit);
 	void giveawayUnit(MemoryUnit *unit);
-	void returnUnit(MemoryUnit *unit);
+	MemoryUnit * returnUnit(void *ptr);
 
 	void AVLRebalancePath(MemoryUnit *top, MemoryUnit *unit);
 	MemoryUnit * AVLSingleRotate(MemoryUnit *parent, MemoryUnit *child);
 	MemoryUnit * AVLDoubleRotate(MemoryUnit *parent, MemoryUnit *child, MemoryUnit *gdchild, MemoryUnit *unit);
+	void AVLDoubleRotate(MemoryUnit *parent, MemoryUnit *child, MemoryUnit *gdchild);
 };
 
 #endif /* MEMORYPOOL_HPP_ */

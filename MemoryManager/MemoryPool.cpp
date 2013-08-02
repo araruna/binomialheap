@@ -90,11 +90,13 @@ MemoryPool::getNewElement() {
 void
 MemoryPool::returnElement(void *ptr)
 throw (std::invalid_argument) {
-	MemoryUnit *unit = findUnit(ptr);
+	MemoryUnit *unit = returnUnit(ptr);
 
 	if(unlikely(unit == NULL))
 		throw std::invalid_argument("O endereco de memoria informado nao pertence a este pool.");
 
+	unit->next = available;
+	available = unit;
 	--inuse;
 
 	returnUnit(unit);
@@ -138,6 +140,7 @@ MemoryPool::giveawayUnit(MemoryUnit *unit) { // Equivalente a inclusao em AVL
 				AVLRebalancePath(first, unit);
 			} else {
 				if((top->left == first && first->left == second) || (top->right == first && first->right == second)) {
+					top->balance = first->balance = 0;
 					AVLRebalancePath(AVLSingleRotate(top, first), unit);
 				} else
 					AVLRebalancePath(AVLDoubleRotate(top, first, second, unit), unit);
@@ -146,15 +149,82 @@ MemoryPool::giveawayUnit(MemoryUnit *unit) { // Equivalente a inclusao em AVL
 	}
 }
 
-void
-MemoryPool::returnUnit(MemoryUnit *unit) {
+MemoryPool::MemoryUnit *
+MemoryPool::returnUnit(void *ptr) {
+	MemoryUnit *unit = NULL;
+
 	if(unlikely(busy->left == NULL && busy->right == NULL)) {
-		busy->next = available;
-		available = busy;
+		unit = busy;
 		busy = NULL;
 	} else {
-		// TODO
+		MemoryUnit *antec, *node;
+
+		node = antec = busy;
+
+		while(node != NULL) {
+			antec = node;
+			if(ptr <= node->address) {
+				if(unlikely(ptr == node->address))
+					unit = node;
+				node = node->left;
+			} else
+				node = node->right;
+		}
+
+		if(likely(unit != NULL)) {
+			if(antec != unit) {
+				unit->address = antec->address;
+				antec->address = ptr;
+				unit = antec;
+			}
+
+			char child; // armazena de que lado o no a remover esta com relacao ao seu pai
+
+			if(unit->right != NULL) { // Removendo proprio no
+				unit->right->next = unit->next;
+
+				if(likely(unit->next != NULL))
+					(unit->next->right == unit ? child = 1, unit->next->right : child = -1, unit->next->left) = unit->right;
+				else
+					busy = unit->right;
+			} else { // Removendo antecessor
+				if(unit->left != NULL)
+					unit->left->next = unit->next;
+
+				if(likely(unit->next != NULL)) {
+					(unit->next->right == unit ? child = 1, unit->next->right : child = -1, unit->next->left) = unit->left;
+				} else
+					busy = unit->left;
+			}
+
+			node = unit->next;
+
+			while(node != NULL) {
+				if(node->balance*child >= 0) {
+					node->balance -= child;
+					break;
+				} else { // Necessita rotacao
+					MemoryUnit *brother = (child < 0 ? node->right : node->left);
+
+					if(brother->balance*node->balance >= 0) { // Rotacao Simples
+						AVLSingleRotate(node, brother);
+						// TODO Consertar balancos
+						node = brother->next;
+						if(brother->balance*node->balance == 0)
+							break;
+					} else { // Rotacao dupla
+						MemoryUnit * gdchild = (brother->balance < 0 ? brother->left : brother->right);
+						AVLDoubleRotate(node, brother, gdchild);
+						// TODO consertar balancos
+						node = gdchild->next;
+						child = (node != NULL && node->left == gdchild ? -1 : 1);
+					}
+				}
+			}
+		}
 	}
+
+	return unit;
 }
 
 void
@@ -170,6 +240,7 @@ MemoryPool::AVLRebalancePath(MemoryUnit *top, MemoryUnit *unit) {
 	}
 }
 
+// OBS: usado tanto pela insercao quanto pela remocao
 MemoryPool::MemoryUnit *
 MemoryPool::AVLSingleRotate(MemoryUnit *parent, MemoryUnit *child) {
 	child->next = parent->next;
@@ -178,8 +249,6 @@ MemoryPool::AVLSingleRotate(MemoryUnit *parent, MemoryUnit *child) {
 		(child->next->left == parent ? child->next->left : child->next->right) = child;
 	else
 		busy = child;
-
-	parent->balance = child->balance = 0;
 
 	if(child->address < parent->address) { // Rotacao a direita
 		parent->left = child->right;
@@ -198,7 +267,7 @@ MemoryPool::AVLSingleRotate(MemoryUnit *parent, MemoryUnit *child) {
 	}
 }
 
-
+// OBS: Chamado pela insercao
 MemoryPool::MemoryUnit *
 MemoryPool::AVLDoubleRotate(MemoryUnit *parent, MemoryUnit *child, MemoryUnit *gdchild, MemoryUnit *unit) {
 	MemoryUnit *incr, *decr;
@@ -239,4 +308,10 @@ MemoryPool::AVLDoubleRotate(MemoryUnit *parent, MemoryUnit *child, MemoryUnit *g
 		--decr->balance;
 		return incr->left;
 	}
+}
+
+// OBS; Chamado pela remocao
+void
+MemoryPool::AVLDoubleRotate(MemoryUnit *parent, MemoryUnit *child, MemoryUnit *gdchild) {
+
 }
