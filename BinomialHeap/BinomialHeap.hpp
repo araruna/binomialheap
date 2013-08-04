@@ -20,11 +20,11 @@ public:
 	class Comparator {
 	public:
 		virtual bool operator()(double key1, double key2) {
-			return key1 < key2;
+			return key1 <= key2;
 		}
 	};
 
-	 BinomialHeap(Comparator &comp = ltdef);
+	 BinomialHeap(Comparator &precedes = leqdef);
 	~BinomialHeap();
 
 	void insert(T* elem);
@@ -59,9 +59,9 @@ private:
 		static void  operator delete(void* ptr);
 	};
 
-	static Comparator ltdef;
+	static Comparator leqdef;
 
-	Comparator comp;
+	Comparator precedes;
 	unsigned long numElems;
 
 	Node *head, *lead;

@@ -7,11 +7,14 @@
 
 #include "BinomialHeap.hpp"
 
-#ifdef __GNUC__
 #ifndef _LIKHOOD__M
 #define _LIKHOOD__M
+#ifdef __GNUC__
 #define likely(x)	__builtin_expect((x),1)
 #define unlikely(x)	__builtin_expect((x),0)
+#else
+#define likely(x)	(x)
+#define unlikely(x)	(x)
 #endif
 #endif
 
@@ -32,8 +35,8 @@ BinomialHeap::Node::operator delete(void* ptr) {
 }
 
 
-BinomialHeap::BinomialHeap(Comparator &comp)
- : comp(comp) {
+BinomialHeap::BinomialHeap(Comparator &precedes)
+ : precedes(precedes) {
 
 	head = lead = NULL;
 	numElems = 0;
@@ -50,10 +53,7 @@ BinomialHeap::insert(T* elem) {
 
 void
 BinomialHeap::insert(T* elem, double key) {
-	Node *i, *j, *p;
-
-	i = p = head;
-	j = new Node;
+	Node *i = head, *j = new Node;
 
 	j->size = 1;
 	j->next = j->children = j->last = NULL;
@@ -63,51 +63,51 @@ BinomialHeap::insert(T* elem, double key) {
 	if(unlikely(head == NULL)) {
 		head = lead = j;
 	} else {
-		while(i != NULL && i->size < j->size) {
-			p = i;
-			i = i->next;
-		}
+		if(head->size > 1) {
+			j->next = head;
+			head = j;
+		} else {
+			while(i != NULL && i->size == j->size) {
+				if(precedes(i->key, j->key)) { // *i* deve ficar em cima; *j* vira filho
+					if(head == j)
+						head = i;
 
-		if(i == NULL || i->size > j->size) {
-			j->next = i;
-			p->next = j;
-		} else while(i != NULL && i->size == j->size) {
-			if(comp(i->key, j->key)) {
-				p->next = j;
-				j->next = i->next;
-				i->next = NULL;
+					if(unlikely(i->last == NULL))
+						i->children = j;
+					else
+						i->last->next = j;
 
-				if(j->last == NULL)
-					j->children = j->last = i;
-				else {
-					j->last->next = i;
-					j->last = i;
-				}
-
-				// Dobramos o numero de elementos na arvore *j*
-				j->size <<= 1;
-
-				// *j* eh sempre a nova arvore
-				i = j->next;
-			} else {
-				if(i->last == NULL)
-					i->children = i->last = i;
-				else {
-					i->last->next = j;
 					i->last = j;
+					j->next = NULL;
+
+					// Dobramos o numero de elementos na arvore *i*
+					i->size <<= 1;
+
+					j = i;
+					i = i->next;
+				} else { // *j* deve ficar em cima; *i* vira filho
+					if(head == i)
+						head = j;
+
+					if(unlikely(j->last == NULL))
+						j->children = i;
+					else
+						j->last->next = i;
+
+					j->last = i;
+					j->next = i->next;
+					i->next = NULL;
+
+					// Dobramos o numero de elementos na arvore *j*
+					j->size <<= 1;
+
+					i = j->next;
 				}
-
-				// Dobramos o numero de elementos na arvore *i*
-				i->size <<= 1;
-
-				// *j* eh sempre a nova arvore
-				j = i;
-				i = i->next;
 			}
-		}
 
-		if(i == NULL)
-			lead = j;
+			if(i == NULL)
+				lead = j;
+		}
 	}
 
 	++numElems;
