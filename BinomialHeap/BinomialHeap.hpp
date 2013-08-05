@@ -12,8 +12,9 @@
 #include <stdexcept>
 #include "../MemoryManager/MemoryPool.hpp"
 
-class T;
+typedef int T;
 
+//template<typename T>
 class BinomialHeap {
 public:
 
@@ -67,5 +68,7 @@ private:
 	Node *head, *lead;
 
 };
+
+//#include "BinomialHeap.cpp"
 
 #endif /* BINOMIALHEAP_HPP_ */

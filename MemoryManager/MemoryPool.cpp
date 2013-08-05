@@ -27,7 +27,7 @@ MemoryPool::MemoryPool(size_t elem_size, unsigned int elems_per_block)
 	blocks = NULL;
 
 	// Os chunks guardam referencia as suas MemoryUnits
-	chunksize = sizeof(MemoryUnit*) + elem_size;
+	chunksize = sizeof(MemoryUnit**) + elem_size;
 
 	addMemoryBlock();
 }
@@ -66,11 +66,11 @@ MemoryPool::populatePool(MemoryBlock *block) {
 	register unsigned int i;
 
 	for(i = 0; i < nelems; ++i, ++unit, address += chunksize) {
-		*(ref = address) = unit;
+		*(ref = reinterpret_cast<MemoryUnit**>(address)) = unit;
 
 		// Pois a porcao saltada guarda o endereco desta MemoryUnit
 		// de forma que possamos recupera-lo quando a memoria for devolvida
-		unit->address = static_cast<MemoryUnit*>(address) + 1;
+		unit->address = ref + 1;
 		unit->next = available;
 
 		available = unit;
@@ -92,7 +92,7 @@ MemoryPool::take() {
 void
 MemoryPool::yield(void *ptr)
 throw (std::invalid_argument) {
-	MemoryUnit *unit = static_cast<MemoryUnit*>(ptr) - 1;
+	MemoryUnit *unit = *(static_cast<MemoryUnit**>(ptr) - 1);
 
 	if(likely(isValid(unit))) {
 		unit->next = available;
@@ -104,11 +104,10 @@ throw (std::invalid_argument) {
 
 bool
 MemoryPool::isValid(MemoryUnit *unit) {
-	char *address = reinterpret_cast<char*>(unit);
-	size_t offset = nelems*chunksize - 1;
+	size_t offset = (nelems - 1)*chunksize;
 
 	for(MemoryBlock *block = blocks; block != NULL; block = block->next) {
-		if(address >= block->block && address <= block->block + offset)
+		if(unit >= block->units && unit <= block->units + offset)
 			return true;
 	}
 

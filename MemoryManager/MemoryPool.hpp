@@ -15,7 +15,7 @@
 //template<typename T>
 class MemoryPool {
 public:
-	 MemoryPool(size_t chunk_size, unsigned int block_nelem) throw (std::out_of_range);
+	 MemoryPool(size_t chunk_size, unsigned int block_nelem);
 	~MemoryPool();
 
 	typedef struct __munit_ {

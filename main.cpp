@@ -5,61 +5,60 @@
  *      Author: eugenio
  */
 
+#include <functional>
+#include <algorithm>
 #include <iostream>
-#include <list>
-#include "MemoryManager/MemoryPool.hpp"
+#include <cstdlib>
+#include <vector>
+#include "BinomialHeap/BinomialHeap.hpp"
 
 using namespace std;
 
-/*
-class Test {
-	static MemoryPool mpool;
-
-	void* operator new () {
-		return mpool.getNewElement();
-	}
-
-	void operator delete(void* ptr) {
-		mpool.returnElement((Test*)ptr);
-	}
-};
-
-MemoryPool Test::mpool(sizeof(Test), 5, 0.6);*/
-
 int main() {
-	MemoryPool pool(sizeof(int), 3, 0.5);
-	list<void*> pointers;
+	BinomialHeap heap;
+	vector<int> v(50000);
+	srand(20);
 
-	for(int i = 0; i < 50; ++i) {
-		pointers.push_back(pool.getNewElement());
-		*((int*)pointers.back()) = i;
+	for(int i = 0; i < 50000; ++i) {
+		v[i] = rand();
+		heap.insert(reinterpret_cast<int*>(v[i]));
 	}
 
-	for(list<MemoryPool::MemoryUnit*>::iterator it = pointers.begin(), end = pointers.end(); it != end; ++it) {
-		static int i = 0;
-		cout << "indice " << i++ << " vale: " << *((int*)*it) << '\n';
+	sort(v.begin(), v.end(), less<int>());
+
+	for(int i = 0; i < 50000; ++i) {
+		if(v[i] != reinterpret_cast<int>(heap.remove())) {
+			cerr << "Deu pau: " << __LINE__ << endl;
+			return 1;
+		}
 	}
 
-	cout << endl;
-
-	for(int i = 0; i < 25; ++i) {
-		pool.returnElement(pointers.front());
-		pointers.pop_front();
+	for(int i = 0; i < 50000; ++i) {
+		v[i] = rand();
+		heap.insert(reinterpret_cast<int*>(v[i]));
 	}
 
-	for(int i = 0; i < 25; ++i) {
-		pointers.push_back(pool.getNewElement());
-		*((int*)pointers.back()) = 50-i;
+	sort(v.begin(), v.end(), less<int>());
+
+	for(int i = 0; i < 50000; ++i) {
+		if(v[i] != reinterpret_cast<int>(heap.remove())) {
+			cerr << "Deu pau: " << __LINE__ << endl;
+			return 1;
+		}
 	}
 
-	for(list<MemoryPool::MemoryUnit*>::iterator it = pointers.begin(), end = pointers.end(); it != end; ++it) {
-		static int i = 0;
-		cout << "indice " << i++ << " vale: " << *((int*)*it) << '\n';
+	for(int i = 0; i < 50000; ++i) {
+		v[i] = rand();
+		heap.insert(reinterpret_cast<int*>(v[i]));
 	}
 
-	for(int i = 0; i < 50; ++i) {
-		pool.returnElement(pointers.front());
-		pointers.pop_front();
+	sort(v.begin(), v.end(), less<int>());
+
+	for(int i = 0; i < 50000; ++i) {
+		if(v[i] != reinterpret_cast<int>(heap.remove())) {
+			cerr << "Deu pau: " << __LINE__ << endl;
+			return 1;
+		}
 	}
 
 	return 0;
